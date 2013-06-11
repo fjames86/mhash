@@ -30,7 +30,7 @@
 
 (in-package #:mhash)
 		   
-(defconstant +min-mhash-table-size+ 16)
+(defconstant +min-mhash-table-size+ 4)
 
 (defclass mhash-table ()
   ((contents :accessor mhash-contents :initarg :contents)
