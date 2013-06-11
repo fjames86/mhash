@@ -10,8 +10,12 @@
 ;;;; (mgethash ht 'a 'b) -> (values 'ab t)
 ;;;; (mgethash ht 'b 'a) -> (values nil nil)
 ;;;; etc.
-;;;; Frank James 2013
-
+;;;; 
+;;;; Copyright (C) 2013 Frank James
+;;;;
+;;;; You are granted the rights to distribute and use this software
+;;;; as governed by the terms of the Lisp Lesser General Public License
+;;;; (http://opensource.franz.com/preamble.html), also known as the LLGPL.
 
 (defpackage #:mhash
   (:use #:cl)
