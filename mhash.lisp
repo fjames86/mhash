@@ -10,7 +10,7 @@
 ;;;; (mgethash ht 'a 'b) -> (values 'ab t)
 ;;;; (mgethash ht 'b 'a) -> (values nil nil)
 ;;;; etc.
-;;;; 
+;;;;
 ;;;; Copyright (C) 2013 Frank James
 ;;;;
 ;;;; You are granted the rights to distribute and use this software
@@ -20,8 +20,8 @@
 (defpackage #:mhash
   (:use #:cl)
   (:export #:make-mhash-table
-		   #:mgethash
-		   #:mremhash
+		   #:getmhash
+		   #:remmhash
 		   #:clrmhash
 		   #:mhash-table-p
 		   #:mhash-count
@@ -29,7 +29,7 @@
 		   #:mapmhash*))
 
 (in-package #:mhash)
-		   
+
 (defconstant +min-mhash-table-size+ 4)
 
 (defclass mhash-table ()
@@ -86,7 +86,7 @@
 (defun mhash-entry (hash-table subscripts)
   (apply #'aref (mhash-contents hash-table) subscripts))
 
-(defun mgethash (hash-table &rest keys)
+(defun getmhash (hash-table &rest keys)
   "Find the entry in the MHASH-TABLE whose keys are KEYS and returns
 the associated value and T as multiple objects, or return NIL and NIL
 if there is no such entry. Entries can be added using SETF."
@@ -96,10 +96,10 @@ if there is no such entry. Entries can be added using SETF."
 		((null entries)
 		 (values nil nil))
 	  (destructure-entry (val key-list) (car entries)
-		(if (every (mhash-test hash-table)
-				   keys
-				   key-list)
-			(return (values val t)))))))
+						 (if (every (mhash-test hash-table)
+									keys
+									key-list)
+							 (return (values val t)))))))
 
 (defun mhash-table-p (obj)
   "Predicate for an mhash table"
@@ -114,7 +114,7 @@ hash table itself."
 		  nil))
   hash-table)
 
-(defun mremhash (hash-table &rest keys)
+(defun remmhash (hash-table &rest keys)
   "Remove the entry from the MHASH-TABLE associated with KEYS.
 Return T if where was such an entry, or NIL if not."
   (let ((subscripts (mhash-subscripts hash-table keys))
@@ -123,14 +123,14 @@ Return T if where was such an entry, or NIL if not."
 				 subscripts)
 		  (mapcan (lambda (entry)
 					(destructure-entry (val key-list) entry
-					  (if (every (mhash-test hash-table)
-								 keys
-								 key-list)
-						  (progn
-							(decf (mhash-count hash-table))
-							(setf found t)
-							nil)
-						  (list entry))))
+									   (if (every (mhash-test hash-table)
+												  keys
+												  key-list)
+										   (progn
+											 (decf (mhash-count hash-table))
+											 (setf found t)
+											 nil)
+										   (list entry))))
 				  (apply #'aref (mhash-contents hash-table)
 						 subscripts)))
 	found))
@@ -138,25 +138,23 @@ Return T if where was such an entry, or NIL if not."
 (defun mhash-resize (hash-table)
   "Increase the size of the hash table"
   (let* ((nsize (ceiling (* (mhash-size hash-table)
-						   (mhash-rehash-size hash-table))))
+							(mhash-rehash-size hash-table))))
 		 (contents (make-array (loop for i below (mhash-dimension hash-table)
-								   collect nsize)
-							  :initial-element nil)))
+								  collect nsize)
+							   :initial-element nil)))
 	(dotimes (i (mhash-total-size hash-table))
 	  (dolist (entry (row-major-aref (mhash-contents hash-table) i))
 		(destructure-entry (val keys) entry
-		  (let ((subscripts (mapcar (lambda (key)
-									  (mod (funcall (mhash-function hash-table) key) nsize))
-									keys)))
-			(setf (apply #'aref contents subscripts)
-				  entry)))))
+						   (let ((subscripts (mapcar (lambda (key)
+													   (mod (funcall (mhash-function hash-table) key) nsize))
+													 keys)))
+							 (push entry (apply #'aref contents subscripts))))))
 	(setf (mhash-contents hash-table) contents
 		  (mhash-size hash-table) nsize
-		  (mhash-total-size hash-table) (expt (mhash-dimension hash-table)
-											  nsize))
+		  (mhash-total-size hash-table) (expt nsize (mhash-dimension hash-table)))
 	hash-table))
 
-(defun (setf mgethash) (value hash-table &rest keys)
+(defun (setf getmhash) (value hash-table &rest keys)
   "Add or replace an entry in the hash table"
   (if (> (/ (mhash-count hash-table) (mhash-total-size hash-table))
 		 (mhash-rehash-threshold hash-table))
@@ -166,22 +164,23 @@ Return T if where was such an entry, or NIL if not."
 	(setf (apply #'aref (mhash-contents hash-table) subscripts)
 		  (mapcan (lambda (entry)
 					(destructure-entry (val key-list) entry
-					  (if (every (mhash-test hash-table)
-								 keys
-								 key-list)
-						  (progn
-							(setf replaced t)
-							(list (make-entry value keys)))
-						  (list entry))))
+									   (if (every (mhash-test hash-table)
+												  keys
+												  key-list)
+										   (progn
+											 (setf replaced t)
+											 (list (make-entry value keys)))
+										   (list entry))))
 				  (mhash-entry hash-table subscripts)))
 	(unless replaced
 	  (push (make-entry value keys)
 			(apply #'aref (mhash-contents hash-table) subscripts))
 	  (incf (mhash-count hash-table)))
-	hash-table))
+	value))
 
 (defun mapmhash (function hash-table)
-  "For each entry in the MHASH-TABLE, call the designated two-argument function on the value and keys of the entry. Return NIL."
+  "For each entry in the MHASH-TABLE, call the designated two-argument function
+on the value and keys of the entry. Returns the new hash table."
   (let ((h (make-mhash-table (mhash-dimension hash-table)
 							 :test (mhash-test hash-table)
 							 :size (mhash-size hash-table)
@@ -191,22 +190,52 @@ Return T if where was such an entry, or NIL if not."
 	  (let ((entries (row-major-aref (mhash-contents hash-table) i)))
 		(dolist (entry entries)
 		  (destructure-entry (val keys) entry
-			(setf (apply #'mgethash h keys)
-				  (funcall function val keys))))))
+							 (setf (apply #'mgethash h keys)
+								   (funcall function val keys))))))
 	h))
 
 (defun mapmhash* (function hash-table)
-  "For each entry in the MHASH-TABLE, call the designated two-argument function on the value and keys of the entry. Return NIL."
+  "For each entry in the MHASH-TABLE, call the designated two-argument function on the value
+and keys of the entry. Returns the original hash table."
   (dotimes (i (mhash-total-size hash-table))
 	(let ((entries (row-major-aref (mhash-contents hash-table) i)))
 	  (dolist (entry entries)
 		(destructure-entry (val keys) entry
-		  (funcall function val keys)))))
+						   (funcall function val keys)))))
   hash-table)
 
 
+(defun print-mhash (hash-table stream)
+  (format stream "~A ~A ~A ~A ~A~%"
+		  (mhash-dimension hash-table)
+		  (mhash-size hash-table)
+		  (mhash-test hash-table)
+		  (mhash-resize hash-table)
+		  (mhash-rehash-threshold hash-table))
+  
+  (mapmhash* (lambda (val keys)
+			   (princ (cons val keys) stream)
+			   (terpri stream))
+			 hash-table))
 
-		
+(defun print-mhash-file (hash-table filename)
+  (with-open-file (f filename :direction :output :if-exists :supersede)
+	(print-mhash hash-table f)))
+
+(defun load-mhash-table (stream &rest args)
+  (let ((h (apply #'make-mhash-table args)))
+	(do ((entry (read stream nil nil) (read stream nil nil)))
+		((null entry))
+	  (destructure-entry (val keys) entry
+						 (setf (apply #'getmhash h keys) val)))
+	h))
+
+(defun load-mhash-table-file (filename &rest args)
+  (with-open-file (f filename :direction :input)
+	(apply #'load-mhash-table f args)))
+
+
+
    
 		
   
