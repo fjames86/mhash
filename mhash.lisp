@@ -6,9 +6,9 @@
 ;;;;
 ;;;; Get a value from the table using (mgethash hash-table &rest keys)
 ;;;; E.g.
-;;;; (setf (mgethash ht 'a 'b) 'ab)
-;;;; (mgethash ht 'a 'b) -> (values 'ab t)
-;;;; (mgethash ht 'b 'a) -> (values nil nil)
+;;;; (setf (getmhash ht 'a 'b) 'ab)
+;;;; (getmhash ht 'a 'b) -> (values 'ab t)
+;;;; (getmhash ht 'b 'a) -> (values 'ab t)
 ;;;; etc.
 ;;;;
 ;;;; Copyright (C) 2013 Frank James
