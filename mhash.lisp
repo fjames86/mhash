@@ -30,6 +30,101 @@
 
 (in-package #:mhash)
 
+
+;; factorials using cached values up to 500 (should easily be big enough)
+(let* ((max-fac 500)
+	   (table (make-array max-fac)))
+  (labels ((gen-fac (n)
+			 (labels ((rec (n acc)
+						(if (= n 0)
+							acc
+							(rec (1- n) (* acc n)))))
+			   (rec n 1))))
+	(dotimes (i max-fac)
+	  (setf (svref table i) (gen-fac i)))
+
+	(defun factorial (n)
+	  "Factorial using cached values"
+	  (if (< n max-fac)
+		  (svref table n)
+		  (gen-fac n)))))
+
+(defun ncr (n k)
+  "nCr combination function"
+  (/ (factorial n)
+	 (* (factorial k) (factorial (- n k)))))
+
+
+(defun base-offset (num-vars degree)
+  (if (< degree 0)
+	  0
+	  (ncr (+ num-vars degree)
+		   degree)))
+
+(defun number-terms (num-vars degree)
+  (if (= degree 0)
+	  1
+	  (- (base-offset num-vars degree)
+		 (base-offset num-vars (1- degree)))))
+
+(defun power-offset (powers)
+  (let ((degree (reduce #'+ (cdr powers))))
+	(cond
+	  ((or (null (cdr powers))
+		   (= (+ (car powers) degree) 0))
+	   0)
+	  (t
+	   (+ (number-terms (length powers) (1- degree))
+		  (power-offset (cdr powers)))))))
+
+(defun offset (subscripts)
+  (let* ((subscripts (sort subscripts #'>=))
+		 (degree (car subscripts))
+		 (subscripts (maplist (lambda (subs)
+								(if (cdr subs)
+									(- (car subs) (cadr subs))
+									(car subs)))
+							  subscripts)))
+	(+ (base-offset (length subscripts) (1- degree))
+	   (power-offset subscripts))))
+
+(defclass carray ()
+  ((contents :reader carray-contents :initarg :contents)
+   (total-size :reader carray-total-size :initarg :total-size)
+   (dimensions :reader carray-dimensions :initarg :dimensions)
+   (ndim :reader carray-ndims :initarg :ndims)))
+
+(defmethod print-object ((c carray) stream)
+  (print-unreadable-object (c stream)
+	(format stream "CARRAY :DIMENSIONS ~A :CONTENTS ~A"
+			(carray-dimensions c)
+			(carray-contents c))))
+
+(defun make-carray (size ndims &key (initial-element 0))
+  (let* ((tsize (base-offset ndims size))
+		 (c (make-array tsize :initial-element initial-element)))
+	(make-instance 'carray
+				   :contents c
+				   :dimensions (loop for i below ndims collect size)
+				   :ndims ndims
+				   :total-size tsize)))
+
+(defun caref (carray &rest subscripts)
+  (svref (carray-contents carray)
+		 (offset subscripts)))
+
+(defun (setf caref) (value carray &rest subscripts)
+  (setf (svref (carray-contents carray)
+			   (offset subscripts))
+		value))
+
+(defun flat-caref (carray index)
+  (svref (carray-contents carray) index))
+
+(defun (setf flat-caref) (value carray index)
+  (setf (svref (carray-contents carray) index)
+		value))
+
 (defconstant +min-mhash-table-size+ 4)
 
 (defclass mhash-table ()
@@ -57,16 +152,17 @@
 						 (rehash-threshold 1)
 						 hash-function)
   "Make an mhash object."
-  (make-instance 'mhash-table
-				 :contents (make-array (loop for i below dimension collect size)
-									   :initial-element nil)
-				 :dimension dimension
-				 :size size
-				 :total-size (expt size dimension)
-				 :rehash-size rehash-size
-				 :rehash-threshold rehash-threshold
-				 :test test
-				 :hash-function (if hash-function hash-function #'sxhash)))
+  (let ((c (make-carray size dimension
+										:initial-element nil)))
+	(make-instance 'mhash-table
+				   :contents c
+				   :dimension dimension
+				   :size size
+				   :total-size (carray-total-size c)
+				   :rehash-size rehash-size
+				   :rehash-threshold rehash-threshold
+				   :test test
+				   :hash-function (if hash-function hash-function #'sxhash))))
 
 (defun mhash-subscripts (hash-table keys)
   "Get the subscripts for the key list"
@@ -84,21 +180,26 @@
 	 ,@body))
 
 (defun mhash-entry (hash-table subscripts)
-  (apply #'aref (mhash-contents hash-table) subscripts))
+  (apply #'caref (mhash-contents hash-table) subscripts))
+
+(defun entry-test (test keys1 keys2)
+  (every (lambda (k)
+		   (member k keys2) :test test)
+		 keys1))
 
 (defun getmhash (hash-table &rest keys)
   "Find the entry in the MHASH-TABLE whose keys are KEYS and returns
 the associated value and T as multiple objects, or return NIL and NIL
 if there is no such entry. Entries can be added using SETF."
   (let ((subscripts (mhash-subscripts hash-table keys)))
-	(do ((entries (apply #'aref (mhash-contents hash-table) subscripts)
+	(do ((entries (apply #'caref (mhash-contents hash-table) subscripts)
 				  (cdr entries)))
 		((null entries)
 		 (values nil nil))
 	  (destructure-entry (val key-list) (car entries)
-						 (if (every (mhash-test hash-table)
-									keys
-									key-list)
+						 (if (entry-test (mhash-test hash-table)
+										 keys
+										 key-list)
 							 (return (values val t)))))))
 
 (defun mhash-table-p (obj)
@@ -109,8 +210,7 @@ if there is no such entry. Entries can be added using SETF."
   "This removes all the entries from the MHASH-TABLE and returns the
 hash table itself."
   (dotimes (i (mhash-total-size hash-table))
-	(setf (row-major-aref (mhash-contents hash-table)
-						  i)
+	(setf (flat-caref (mhash-contents hash-table) i)
 		  nil))
   hash-table)
 
@@ -119,19 +219,19 @@ hash table itself."
 Return T if where was such an entry, or NIL if not."
   (let ((subscripts (mhash-subscripts hash-table keys))
 		(found nil))
-	(setf (apply #'aref (mhash-contents hash-table)
+	(setf (apply #'caref (mhash-contents hash-table)
 				 subscripts)
 		  (mapcan (lambda (entry)
 					(destructure-entry (val key-list) entry
-									   (if (every (mhash-test hash-table)
-												  keys
-												  key-list)
+									   (if (entry-test (mhash-test hash-table)
+													   keys
+													   key-list)
 										   (progn
 											 (decf (mhash-count hash-table))
 											 (setf found t)
 											 nil)
 										   (list entry))))
-				  (apply #'aref (mhash-contents hash-table)
+				  (apply #'caref (mhash-contents hash-table)
 						 subscripts)))
 	found))
 
@@ -139,19 +239,18 @@ Return T if where was such an entry, or NIL if not."
   "Increase the size of the hash table"
   (let* ((nsize (ceiling (* (mhash-size hash-table)
 							(mhash-rehash-size hash-table))))
-		 (contents (make-array (loop for i below (mhash-dimension hash-table)
-								  collect nsize)
-							   :initial-element nil)))
+		 (contents (make-carray nsize (mhash-dimension hash-table)
+								:initial-element nil)))
 	(dotimes (i (mhash-total-size hash-table))
-	  (dolist (entry (row-major-aref (mhash-contents hash-table) i))
+	  (dolist (entry (flat-caref (mhash-contents hash-table) i))
 		(destructure-entry (val keys) entry
 						   (let ((subscripts (mapcar (lambda (key)
 													   (mod (funcall (mhash-function hash-table) key) nsize))
 													 keys)))
-							 (push entry (apply #'aref contents subscripts))))))
+							 (push entry (apply #'caref contents subscripts))))))
 	(setf (mhash-contents hash-table) contents
 		  (mhash-size hash-table) nsize
-		  (mhash-total-size hash-table) (expt nsize (mhash-dimension hash-table)))
+		  (mhash-total-size hash-table) (carray-total-size contents))
 	hash-table))
 
 (defun (setf getmhash) (value hash-table &rest keys)
@@ -161,12 +260,12 @@ Return T if where was such an entry, or NIL if not."
 	  (mhash-resize hash-table))
   (let ((subscripts (mhash-subscripts hash-table keys))
 		(replaced nil))
-	(setf (apply #'aref (mhash-contents hash-table) subscripts)
+	(setf (apply #'caref (mhash-contents hash-table) subscripts)
 		  (mapcan (lambda (entry)
 					(destructure-entry (val key-list) entry
-									   (if (every (mhash-test hash-table)
-												  keys
-												  key-list)
+									   (if (entry-test (mhash-test hash-table)
+													   keys
+													   key-list)
 										   (progn
 											 (setf replaced t)
 											 (list (make-entry value keys)))
@@ -174,7 +273,7 @@ Return T if where was such an entry, or NIL if not."
 				  (mhash-entry hash-table subscripts)))
 	(unless replaced
 	  (push (make-entry value keys)
-			(apply #'aref (mhash-contents hash-table) subscripts))
+			(apply #'caref (mhash-contents hash-table) subscripts))
 	  (incf (mhash-count hash-table)))
 	value))
 
@@ -187,10 +286,10 @@ on the value and keys of the entry. Returns the new hash table."
 							 :rehash-size (mhash-rehash-size hash-table)
 							 :rehash-threshold (mhash-rehash-threshold hash-table))))
 	(dotimes (i (mhash-total-size hash-table))
-	  (let ((entries (row-major-aref (mhash-contents hash-table) i)))
+	  (let ((entries (flat-caref (mhash-contents hash-table) i)))
 		(dolist (entry entries)
 		  (destructure-entry (val keys) entry
-							 (setf (apply #'mgethash h keys)
+							 (setf (apply #'getmhash h keys)
 								   (funcall function val keys))))))
 	h))
 
@@ -198,7 +297,7 @@ on the value and keys of the entry. Returns the new hash table."
   "For each entry in the MHASH-TABLE, call the designated two-argument function on the value
 and keys of the entry. Returns the original hash table."
   (dotimes (i (mhash-total-size hash-table))
-	(let ((entries (row-major-aref (mhash-contents hash-table) i)))
+	(let ((entries (flat-caref (mhash-contents hash-table) i)))
 	  (dolist (entry entries)
 		(destructure-entry (val keys) entry
 						   (funcall function val keys)))))
