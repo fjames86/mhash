@@ -303,13 +303,12 @@ and keys of the entry. Returns the original hash table."
 						   (funcall function val keys)))))
   hash-table)
 
-
 (defun print-mhash (hash-table stream)
   (format stream "~A ~A ~A ~A ~A~%"
 		  (mhash-dimension hash-table)
 		  (mhash-size hash-table)
-		  (mhash-test hash-table)
-		  (mhash-resize hash-table)
+		  (nth-value 2 (function-lambda-expression (mhash-test hash-table)))
+		  (mhash-rehash-size hash-table)
 		  (mhash-rehash-threshold hash-table))
   
   (mapmhash* (lambda (val keys)
@@ -321,18 +320,23 @@ and keys of the entry. Returns the original hash table."
   (with-open-file (f filename :direction :output :if-exists :supersede)
 	(print-mhash hash-table f)))
 
-(defun load-mhash-table (stream &rest args)
-  (let ((h (apply #'make-mhash-table args)))
+(defun load-mhash-table (stream)
+  (let ((h (apply #'make-mhash-table
+				  (list (read stream nil nil)
+						:size (read stream nil nil)
+						:test (symbol-function (read stream nil nil))
+						:rehash-size (read stream nil nil)
+						:rehash-threshold (read stream nil nil)
+						:hash-function (symbol-function (read stream nil nil))))))
 	(do ((entry (read stream nil nil) (read stream nil nil)))
 		((null entry))
 	  (destructure-entry (val keys) entry
 						 (setf (apply #'getmhash h keys) val)))
 	h))
 
-(defun load-mhash-table-file (filename &rest args)
+(defun load-mhash-table-file (filename)
   (with-open-file (f filename :direction :input)
-	(apply #'load-mhash-table f args)))
-
+	(load-mhash-table f)))
 
 
    
