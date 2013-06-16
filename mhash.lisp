@@ -166,6 +166,11 @@
 
 (defun mhash-subscripts (hash-table keys)
   "Get the subscripts for the key list"
+  (assert (= (length keys) (mhash-dimension hash-table))
+		  (keys)
+		  "KEYS ~A not of length DIMENSION ~A"
+		  keys
+		  (mhash-dimension hash-table))
   (let ((n (mhash-size hash-table)))
 	(mapcar (lambda (key)
 			  (mod (funcall (mhash-function hash-table) key) n))
@@ -183,9 +188,7 @@
   (apply #'caref (mhash-contents hash-table) subscripts))
 
 (defun entry-test (test keys1 keys2)
-  (every (lambda (k)
-		   (member k keys2) :test test)
-		 keys1))
+  (not (set-exclusive-or keys1 keys2 :test test)))
 
 (defun getmhash (hash-table &rest keys)
   "Find the entry in the MHASH-TABLE whose keys are KEYS and returns
